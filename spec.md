@@ -1,5 +1,4 @@
 # SPEC
-
 ## 対応命令
 
 - ORG memory place addr
@@ -13,12 +12,14 @@
 - AND
 - OR
 - XOR
+- NOT
 - PUSH
 - POP
 - SHOW
 - HLT
 
 ## レジスタ
+
 - rax
 - rbx
 - rcx
