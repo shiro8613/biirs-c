@@ -1,0 +1,9 @@
+
+ORG 0x10
+
+MOV ax 1 //ax is 1
+MOV bx 2
+ADD ax bx
+SHOW ax
+HLT
+
