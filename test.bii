@@ -1,9 +1,8 @@
 
 ORG 0x10
-
-MOV ax 1 //ax is 1
-MOV bx 2
-ADD ax bx
-SHOW ax
+MOV rax 1 //ax is 1
+MOV rbx 2
+ADD rax rbx
+SHOW rax
 HLT
 
