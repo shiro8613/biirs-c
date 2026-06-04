@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,36 +12,63 @@
 // opcodes, registers, literals, max 15 chars + nul char(1byte)
 #define LIT_BUFF_SIZE 15 + 1
 
+#define UNKNOWN 0xFF
+#define OPCODES_LEN 2
+#define OPCODES_REG 0
+#define OPCODES_LIT 1
+
+typedef struct OpCode {
+  const char *name;
+  const uint8_t types[OPCODES_LEN];
+} OpCode;
+
+#define INIT_OPCODE(name, ...)                                                 \
+  {                                                                            \
+    name, { __VA_ARGS__ }                                                      \
+  }
+
 // opcodes
-#define OP_ORG 0x01
-#define OP_LD 0x02
-#define OP_MOV_REG 0x03
-#define OP_MOV_PRI 0x04
-#define OP_ADD 0x05
-#define OP_SUB 0x06
-#define OP_MUL 0x07
-#define OP_DIV 0x08
-#define OP_AND 0x09
-#define OP_OR 0x0A
-#define OP_XOR 0x0B
-#define OP_PUSH 0x0C
-#define OP_POP 0x0D
-#define OP_SHOW 0x0E
-#define OP_HLT 0x0F
+const OpCode OPCODES[16] = {
+    INIT_OPCODE("org", 0x01),       INIT_OPCODE("ld", 0x02),
+    INIT_OPCODE("mov", 0x03, 0x04), INIT_OPCODE("str", 0x05),
+    INIT_OPCODE("add", 0x06),       INIT_OPCODE("sub", 0x07),
+    INIT_OPCODE("mul", 0x08),       INIT_OPCODE("div", 0x09),
+    INIT_OPCODE("and", 0x0a),       INIT_OPCODE("or", 0x0b),
+    INIT_OPCODE("xor", 0x0c),       INIT_OPCODE("not", 0x0d),
+    INIT_OPCODE("push", 0x0e),      INIT_OPCODE("pop", 0x0f),
+    INIT_OPCODE("show", 0x10),      INIT_OPCODE("halt", 0x11),
+};
+
+#define CREATE_REGISTER(buf, name, val)                                        \
+  if (strcmp(buf, name) == 0)                                                  \
+    return val;
 
 // registers
-#define RAX 0x00
-#define RBX 0x01
-#define RCX 0x02
-#define RDX 0x03
-#define R5 0x05
-#define R6 0x06
-#define R7 0x07
-#define R8 0x08
+uint8_t to_register(char *buf) {
+  CREATE_REGISTER(buf, "rax", 0x01)
+  CREATE_REGISTER(buf, "rbx", 0x02)
+  CREATE_REGISTER(buf, "rcx", 0x03)
+  CREATE_REGISTER(buf, "rdx", 0x04)
+  CREATE_REGISTER(buf, "r5", 0x05)
+  CREATE_REGISTER(buf, "r6", 0x06)
+  CREATE_REGISTER(buf, "r7", 0x07)
+  CREATE_REGISTER(buf, "r8", 0x08)
+  return UNKNOWN;
+}
 
 void die(const char *msg) {
   printf("Error: %s\n", msg);
   exit(1);
+}
+
+void to_lower(char *buf) {
+  if (!buf) {
+    return;
+  }
+
+  for (int i = 0; buf[i] != '\0'; i++) {
+    buf[i] = tolower(buf[i]);
+  }
 }
 
 typedef struct var_buffer {
@@ -83,10 +111,77 @@ long get_var_buffer(var_buffer *instance, size_t idx) {
   return instance->ptr[idx];
 }
 
+typedef enum ParseState {
+  WAIT,
+  LITERAL,
+  OK,
+} ParseState;
+
+typedef enum ParseResult {
+  CONTINUE,
+  SUCCESS,
+  FAIL,
+} ParseResult;
+
+struct op_parser {
+  ParseState state;
+  char lit_buf[LIT_BUFF_SIZE];
+  uint8_t reg;
+  long from;
+};
+
+void parser_clear(struct op_parser *p) {
+  p->state = WAIT;
+  p->reg = 0x00;
+  p->from = 0x00;
+}
+
+// todo: opcodes毎に変数長が違う問題を何とかする
+// 現在は初手レジスタ固定だが、その限りでは無いものの対応をする
+
+ParseResult parser_parse(struct op_parser *p, char *buf) {
+  if (p->reg == 0x00) {
+    if (p->state == WAIT) {
+      strcpy(p->lit_buf, buf);
+      p->state = LITERAL;
+    } else if (p->state == LITERAL) {
+      uint8_t r = to_register(buf);
+      if (r == UNKNOWN) {
+        return FAIL;
+      }
+
+      p->reg = r;
+    }
+
+    return CONTINUE;
+  } else if (p->from == 0x00) {
+    long l;
+    char *endptr;
+    l = strtol(buf, &endptr, 0);
+    if (buf != endptr) {
+      p->from = l;
+    } else {
+      uint8_t r = to_register(buf);
+      if (r == UNKNOWN) {
+        return FAIL;
+      }
+      p->from = r;
+    }
+
+    return SUCCESS;
+  }
+
+  return CONTINUE;
+}
+
+void parser_print(struct op_parser *p) {
+  printf("%s %d %ld", p->lit_buf, p->reg, p->from);
+}
+
 typedef enum Mode {
-  SKIP = 0,
-  LIT = 1,
-  COMMENT = 2,
+  SKIP,
+  LIT,
+  COMMENT,
 } Mode;
 
 bool is_valid_char(char c) {
@@ -102,6 +197,8 @@ int parse_text(char *buf, ssize_t len) {
   Mode mode = SKIP;
   size_t lit_len = 0;
   char lit_buf[LIT_BUFF_SIZE];
+  struct op_parser parser = {0};
+  parser_clear(&parser);
 
   for (ssize_t i = 0; i < len; i++) {
     char c = buf[i];
@@ -122,8 +219,15 @@ int parse_text(char *buf, ssize_t len) {
         lit_buf[lit_len++] = c;
       } else {
         lit_buf[lit_len++] = '\0';
-        // todo parse lit
-        printf("%s\n", lit_buf);
+        to_lower(lit_buf);
+        ParseResult res = parser_parse(&parser, lit_buf);
+        if (res == FAIL) {
+          return -1;
+        } else if (res == SUCCESS) {
+          parser_print(&parser);
+          parser_clear(&parser);
+        }
+
         mode = SKIP;
         lit_len = 0;
       }
