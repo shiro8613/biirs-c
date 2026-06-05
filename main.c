@@ -13,31 +13,56 @@
 #define LIT_BUFF_SIZE 15 + 1
 
 #define UNKNOWN 0xFF
-#define OPCODES_LEN 2
+#define OPCODES_LEN 16
+#define OPCODES_TYPE_LEN 2
 #define OPCODES_REG 0
 #define OPCODES_LIT 1
 
-typedef struct OpCode {
+typedef struct opcode_t {
   const char *name;
-  const uint8_t types[OPCODES_LEN];
-} OpCode;
+  const size_t len;
+  const uint8_t types[OPCODES_TYPE_LEN];
+} opcode_t;
 
-#define INIT_OPCODE(name, ...)                                                 \
+#define INIT_OPCODE(name, len, ...)                                            \
   {                                                                            \
-    name, { __VA_ARGS__ }                                                      \
+    name, len, { __VA_ARGS__ }                                                 \
   }
 
 // opcodes
-const OpCode OPCODES[16] = {
-    INIT_OPCODE("org", 0x01),       INIT_OPCODE("ld", 0x02),
-    INIT_OPCODE("mov", 0x03, 0x04), INIT_OPCODE("str", 0x05),
-    INIT_OPCODE("add", 0x06),       INIT_OPCODE("sub", 0x07),
-    INIT_OPCODE("mul", 0x08),       INIT_OPCODE("div", 0x09),
-    INIT_OPCODE("and", 0x0a),       INIT_OPCODE("or", 0x0b),
-    INIT_OPCODE("xor", 0x0c),       INIT_OPCODE("not", 0x0d),
-    INIT_OPCODE("push", 0x0e),      INIT_OPCODE("pop", 0x0f),
-    INIT_OPCODE("show", 0x10),      INIT_OPCODE("halt", 0x11),
+const opcode_t OPCODES[OPCODES_LEN] = {
+    INIT_OPCODE("org", 1, 0x01),       INIT_OPCODE("ld", 1, 0x02),
+    INIT_OPCODE("mov", 2, 0x03, 0x04), INIT_OPCODE("str", 1, 0x05),
+    INIT_OPCODE("add", 2, 0x06),       INIT_OPCODE("sub", 2, 0x07),
+    INIT_OPCODE("mul", 2, 0x08),       INIT_OPCODE("div", 2, 0x09),
+    INIT_OPCODE("and", 2, 0x0a),       INIT_OPCODE("or", 2, 0x0b),
+    INIT_OPCODE("xor", 2, 0x0c),       INIT_OPCODE("not", 2, 0x0d),
+    INIT_OPCODE("push", 1, 0x0e),      INIT_OPCODE("pop", 1, 0x0f),
+    INIT_OPCODE("show", 1, 0x10),      INIT_OPCODE("halt", 0, 0x11),
 };
+
+struct opcode_i {
+  size_t idx;
+  size_t len;
+};
+
+void opcode_clear(struct opcode_i *p) {
+  p->idx = 0;
+  p->len = 0;
+}
+
+int opcode_find(struct opcode_i *op, char *buf) {
+  for (size_t i = 0; i < OPCODES_LEN; i++) {
+    const opcode_t opcode = OPCODES[i];
+    if (strcmp(buf, opcode.name) == 0) {
+      op->idx = i;
+      op->len = opcode.len;
+      return 0;
+    }
+  }
+
+  return -1;
+}
 
 #define CREATE_REGISTER(buf, name, val)                                        \
   if (strcmp(buf, name) == 0)                                                  \
@@ -125,13 +150,16 @@ typedef enum ParseResult {
 
 struct op_parser {
   ParseState state;
-  char lit_buf[LIT_BUFF_SIZE];
+  struct opcode_i opcode;
+  uint8_t opcode_len;
   uint8_t reg;
   long from;
 };
 
 void parser_clear(struct op_parser *p) {
+  opcode_clear(&p->opcode);
   p->state = WAIT;
+  p->opcode_len = 0;
   p->reg = 0x00;
   p->from = 0x00;
 }
@@ -142,19 +170,30 @@ void parser_clear(struct op_parser *p) {
 ParseResult parser_parse(struct op_parser *p, char *buf) {
   if (p->reg == 0x00) {
     if (p->state == WAIT) {
-      strcpy(p->lit_buf, buf);
+      if (opcode_find(&p->opcode, buf)) {
+        return FAIL;
+      }
       p->state = LITERAL;
     } else if (p->state == LITERAL) {
       uint8_t r = to_register(buf);
       if (r == UNKNOWN) {
+        char *endptr;
+        long l = strtol(buf, &endptr, 0);
+        if (buf != endptr) {
+          p->from = l;
+          p->opcode_len++;
+          return CONTINUE;
+        }
+
         return FAIL;
       }
 
       p->reg = r;
+      p->opcode_len++;
     }
 
     return CONTINUE;
-  } else if (p->from == 0x00) {
+  } else if (p->from == 0x00 && p->opcode_len <= p->opcode.len) {
     long l;
     char *endptr;
     l = strtol(buf, &endptr, 0);
@@ -169,13 +208,15 @@ ParseResult parser_parse(struct op_parser *p, char *buf) {
     }
 
     return SUCCESS;
+  } else if (p->opcode_len >= p->opcode.len) {
+    return SUCCESS;
   }
 
   return CONTINUE;
 }
 
 void parser_print(struct op_parser *p) {
-  printf("%s %d %ld", p->lit_buf, p->reg, p->from);
+  printf("%ld %d %ld\n", p->opcode.idx, p->reg, p->from);
 }
 
 typedef enum Mode {
